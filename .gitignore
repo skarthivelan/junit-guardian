@@ -1,0 +1,26 @@
+# ── JUnit Guardian ───────────────────────────────────────────────────────────
+
+# Gradle build output
+build/
+.gradle/
+
+# Generated fat JAR (rebuilt via: ./gradlew shadowJar)
+build/libs/
+
+# Guardian runtime config (contains JAR path, may differ per machine)
+.guardian.env
+
+# Generated test files (review before committing)
+src/test/
+
+# JSON report output
+junit-guardian-report.json
+
+# Gradle wrapper jar (large binary, regenerated via: gradle wrapper)
+gradle/wrapper/gradle-wrapper.jar
+
+# IDE files
+.idea/
+*.iml
+.vscode/
+*.class

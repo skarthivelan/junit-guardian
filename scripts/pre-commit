@@ -1,0 +1,124 @@
+#!/usr/bin/env bash
+# =============================================================================
+# JUnit Guardian — Git pre-commit hook
+# Build tool : Gradle
+# LLM        : Ollama (local — no API key required)
+# On missing : Warn only (commit is NOT blocked)
+# =============================================================================
+# Installation (run from your Java project root):
+#   bash path/to/junit-guardian/scripts/install.sh
+#   — or manually —
+#   cp scripts/pre-commit .git/hooks/pre-commit
+#   chmod +x .git/hooks/pre-commit
+#
+# Environment variables (optional overrides):
+#   JUNIT_GUARDIAN_JAR     — explicit path to the guardian fat JAR
+#   JUNIT_GUARDIAN_MODEL   — Ollama model name (default: codellama)
+#   JUNIT_GUARDIAN_OLLAMA  — Ollama base URL   (default: http://localhost:11434)
+#   JUNIT_GUARDIAN_MIN_COV — minimum coverage % warning threshold (default: 80)
+#   JUNIT_GUARDIAN_MODE    — scan | generate (default: generate)
+# =============================================================================
+
+set -uo pipefail   # note: NOT -e so the hook never hard-exits on a non-zero
+
+# ---- Colour helpers ---------------------------------------------------------
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
+CYAN='\033[0;36m'; BOLD='\033[1m'; NC='\033[0m'
+info()    { echo -e "${GREEN}[guardian]${NC} $*"; }
+warn()    { echo -e "${YELLOW}[guardian] ⚠  $*${NC}"; }
+error()   { echo -e "${RED}[guardian] ✗  $*${NC}" >&2; }
+success() { echo -e "${GREEN}[guardian] ✓  $*${NC}"; }
+banner()  { echo -e "\n${CYAN}${BOLD}$*${NC}\n"; }
+
+# ---- Config ------------------------------------------------------------------
+GUARDIAN_JAR="${JUNIT_GUARDIAN_JAR:-}"
+MODEL="${JUNIT_GUARDIAN_MODEL:-codellama}"
+OLLAMA_URL="${JUNIT_GUARDIAN_OLLAMA:-http://localhost:11434}"
+MIN_COV="${JUNIT_GUARDIAN_MIN_COV:-80}"
+MODE="${JUNIT_GUARDIAN_MODE:-generate}"
+PROJECT_ROOT="$(git rev-parse --show-toplevel)"
+
+banner "JUnit Guardian  (Ollama / warn-only)"
+
+# ---- Only run when Java files are staged -------------------------------------
+STAGED_JAVA=$(git diff --cached --name-only --diff-filter=ACM | grep '\.java$' || true)
+
+if [ -z "$STAGED_JAVA" ]; then
+    info "No staged Java files — skipping."
+    exit 0
+fi
+
+info "Staged Java files detected:"
+echo "$STAGED_JAVA" | while read -r f; do echo "   • $f"; done
+echo ""
+
+# ---- Locate the fat JAR (Gradle output: build/libs/) -------------------------
+if [ -z "$GUARDIAN_JAR" ]; then
+    GUARDIAN_JAR=$(find "$PROJECT_ROOT" \
+        \( -path "*/build/libs/junit-guardian-*.jar" \
+           -o -name "junit-guardian-*.jar" \) \
+        -not -name "*-sources.jar" \
+        2>/dev/null | head -1 || true)
+fi
+
+if [ -z "$GUARDIAN_JAR" ] || [ ! -f "$GUARDIAN_JAR" ]; then
+    warn "junit-guardian JAR not found — skipping coverage check."
+    warn "Build it:  cd /path/to/junit-guardian && ./gradlew shadowJar"
+    warn "Then set:  export JUNIT_GUARDIAN_JAR=/path/to/junit-guardian-1.0.0.jar"
+    exit 0   # warn-only: never block
+fi
+
+# ---- Java version check ------------------------------------------------------
+if ! command -v java &>/dev/null; then
+    warn "Java not found in PATH — skipping coverage check."
+    exit 0
+fi
+
+JAVA_VER=$(java -version 2>&1 | awk -F '"' '/version/ {print $2}' | cut -d'.' -f1)
+if [ "${JAVA_VER:-0}" -lt 17 ] 2>/dev/null; then
+    warn "Java 17+ required (found ${JAVA_VER}) — skipping coverage check."
+    exit 0
+fi
+
+# ---- Check Ollama is reachable -----------------------------------------------
+if ! curl -sf --max-time 3 "${OLLAMA_URL}/api/tags" > /dev/null 2>&1; then
+    warn "Ollama is not reachable at ${OLLAMA_URL}."
+    warn "Start it with:  ollama serve"
+    warn "Skipping test generation — commit allowed."
+    exit 0
+fi
+
+# Check the model is pulled locally
+MODEL_COUNT=$(curl -sf "${OLLAMA_URL}/api/tags" \
+    | grep -c "\"name\":\"${MODEL}" 2>/dev/null || echo "0")
+
+if [ "$MODEL_COUNT" -eq 0 ]; then
+    warn "Ollama model '${MODEL}' not found locally."
+    warn "Pull it with:  ollama pull ${MODEL}"
+    warn "Skipping test generation — commit allowed."
+    exit 0
+fi
+
+# ---- Run Guardian ------------------------------------------------------------
+info "Running JUnit Guardian  [model=${MODEL}  mode=${MODE}  min-cov=${MIN_COV}%]"
+echo ""
+
+java -jar "$GUARDIAN_JAR" \
+    --mode         "$MODE"       \
+    --llm-provider "ollama"      \
+    --ollama-url   "$OLLAMA_URL" \
+    --model        "$MODEL"      \
+    --min-coverage "$MIN_COV"    \
+    --fail-on-missing=false      \
+    "$PROJECT_ROOT"
+
+GUARDIAN_EXIT=$?
+echo ""
+
+if [ $GUARDIAN_EXIT -ne 0 ]; then
+    warn "Guardian exited with code $GUARDIAN_EXIT — commit allowed (warn-only mode)."
+fi
+
+# ---- Always allow the commit -------------------------------------------------
+success "JUnit Guardian check complete — proceeding with commit."
+exit 0

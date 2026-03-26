@@ -1,0 +1,60 @@
+plugins {
+    id 'java'
+    id 'application'
+    id 'com.gradleup.shadow' version '9.0.0'
+}
+
+group   = 'com.junitguardian'
+version = '1.0.0'
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
+}
+
+application {
+    mainClass = 'com.junitguardian.Main'
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    // HTTP client for Ollama API calls
+    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+
+    // JSON parsing
+    implementation 'com.google.code.gson:gson:2.10.1'
+
+    // CLI argument parsing
+    implementation 'info.picocli:picocli:4.7.5'
+
+    // Java source code parsing (AST)
+    implementation 'com.github.javaparser:javaparser-core:3.25.8'
+
+    // Logging
+    implementation 'org.slf4j:slf4j-simple:2.0.9'
+}
+
+// Build a fat JAR so the tool runs standalone in any Java project
+shadowJar {
+    archiveBaseName.set('junit-guardian')
+    archiveClassifier.set('')
+    archiveVersion.set(project.version.toString())
+    mergeServiceFiles()
+
+    // Strip signature files that break shading
+    exclude 'META-INF/*.SF'
+    exclude 'META-INF/*.DSA'
+    exclude 'META-INF/*.RSA'
+}
+
+// Make `gradle build` produce the fat JAR automatically
+build.dependsOn shadowJar
+
+jar {
+    manifest {
+        attributes 'Main-Class': application.mainClass
+    }
+}
